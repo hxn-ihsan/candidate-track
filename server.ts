@@ -5,8 +5,9 @@ import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { apiRouter } from './server/api.js';
 
-// Load .env.local first, then fallback to .env
-dotenv.config({ path: '.env.local' });
+// Load .env.local first, then fallback to .env from project root
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);

@@ -4,17 +4,25 @@ import { CandidateInput, HiringStage } from '../src/types.js';
 
 export const apiRouter = Router();
 
+// Helper to sanitize any connection strings containing credentials
+function sanitizeError(err: any): string {
+  const str = String(err?.message || err || '');
+  return str.replace(/(mongodb(?:\+srv)?:\/\/[^:]+:)([^@]+)@/g, '$1***@');
+}
+
 // Helper to determine if an error is a database connection issue
 function isDbConnectionError(err: any): boolean {
   const msg = (err?.message || '').toLowerCase();
   return (
     msg.includes('unable to connect to the database') ||
     msg.includes('mongodb_uri is not configured') ||
+    msg.includes('placeholder <db_password>') ||
     msg.includes('server selection timed out') ||
     msg.includes('connecteconrefused') ||
     msg.includes('enotfound') ||
     msg.includes('topology was destroyed') ||
-    msg.includes('authentication failed')
+    msg.includes('authentication failed') ||
+    msg.includes('bad auth')
   );
 }
 
@@ -31,7 +39,7 @@ apiRouter.get('/candidates', async (req: Request, res: Response) => {
     res.json({ success: true, data: candidates });
   } catch (error: any) {
     if (isDbConnectionError(error)) {
-      console.warn('MongoDB connection unavailable:', error?.message || error);
+      console.warn('MongoDB connection unavailable:', sanitizeError(error));
       return res.status(503).json({
         success: false,
         error: 'Unable to connect to the database.',
@@ -39,8 +47,8 @@ apiRouter.get('/candidates', async (req: Request, res: Response) => {
         databaseConnected: false,
       });
     }
-    console.error('Error fetching candidates:', error?.message || error);
-    res.status(500).json({ success: false, error: error.message || 'Failed to retrieve candidates' });
+    console.error('Error fetching candidates:', sanitizeError(error));
+    res.status(500).json({ success: false, error: sanitizeError(error) || 'Failed to retrieve candidates' });
   }
 });
 

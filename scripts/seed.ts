@@ -1,9 +1,12 @@
 import { MongoClient } from 'mongodb';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { resolveMongoUri } from '../lib/mongodb.js';
 
-// Load .env.local first, then fallback to .env
-dotenv.config({ path: '.env.local' });
+// Load .env.local first, then fallback to .env from project root
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config();
 
 const rawUri = process.env.MONGODB_URI || process.env.MONGODB_URL;
@@ -139,8 +142,6 @@ async function seed() {
     process.exit(1);
   }
 }
-
-import { fileURLToPath } from 'url';
 
 export { seed };
 

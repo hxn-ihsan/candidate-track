@@ -1,12 +1,11 @@
 import { MongoClient, Db, Collection, ServerApiVersion, ObjectId } from 'mongodb';
+import path from 'path';
 import dotenv from 'dotenv';
 
-// Load both .env.local and .env
-dotenv.config({ path: '.env.local' });
+// Ensure .env.local and .env are loaded from current working directory
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config();
-
-const uri = process.env.MONGODB_URI || process.env.MONGODB_URL;
-const dbName = process.env.MONGODB_DB || 'candidate_hiring_tracker';
 
 export interface CandidateDocument {
   _id?: ObjectId;
@@ -28,14 +27,26 @@ export interface CandidateDocument {
 declare global {
   // eslint-disable-next-line no-var
   var _mongoClientPromise: Promise<MongoClient> | undefined;
+  // eslint-disable-next-line no-var
+  var _cachedMongoUri: string | undefined;
 }
 
-let client: MongoClient;
-let clientPromise: Promise<MongoClient>;
+let client: MongoClient | undefined;
+let clientPromise: Promise<MongoClient> | undefined;
+let cachedUri: string | undefined;
 
+/**
+ * Validates and resolves the active MongoDB URI from environment variables.
+ * Automatically cleans known copy-paste artifacts and warns on placeholder passwords.
+ */
 export function resolveMongoUri(rawUri?: string): string | undefined {
-  const candidate = rawUri || process.env.MONGODB_URI || process.env.MONGODB_URL;
+  const candidate = (rawUri || process.env.MONGODB_URI || process.env.MONGODB_URL || '').trim();
   if (!candidate) return undefined;
+
+  // Check if placeholder password is still present
+  if (candidate.includes('<db_password>') || candidate.includes('<password>')) {
+    throw new Error('MONGODB_URI contains placeholder <db_password>. Please configure your actual password in .env.local.');
+  }
 
   // Check if password has accidental username prefix repetition like '_db_user...'
   const match = candidate.match(/^(mongodb(?:\+srv)?:\/\/)([^:]+):([^@]+)@(.+)$/);
@@ -54,6 +65,7 @@ export function resolveMongoUri(rawUri?: string): string | undefined {
 /**
  * Returns a cached, connection-pooled MongoClient instance.
  * Reuses connections across requests to prevent exhausting database sockets.
+ * Automatically cleans rejected promises so failed attempts can be retried immediately.
  */
 export async function getClient(): Promise<MongoClient> {
   const currentUri = resolveMongoUri();
@@ -63,8 +75,12 @@ export async function getClient(): Promise<MongoClient> {
   }
 
   if (process.env.NODE_ENV === 'development') {
-    // In development mode, use a global variable so that the value
-    // is preserved across module reloads caused by HMR or tsx.
+    // If URI changed, discard previous connection pool
+    if (global._cachedMongoUri !== currentUri) {
+      global._mongoClientPromise = undefined;
+      global._cachedMongoUri = currentUri;
+    }
+
     if (!global._mongoClientPromise) {
       client = new MongoClient(currentUri, {
         serverApi: {
@@ -75,11 +91,22 @@ export async function getClient(): Promise<MongoClient> {
         connectTimeoutMS: 5000,
         serverSelectionTimeoutMS: 5000,
       });
-      global._mongoClientPromise = client.connect();
+
+      const p = client.connect();
+      // On connection rejection, clear cache so subsequent calls can retry
+      p.catch(() => {
+        global._mongoClientPromise = undefined;
+      });
+      global._mongoClientPromise = p;
     }
     clientPromise = global._mongoClientPromise;
   } else {
-    // In production mode, it's best to not use a global variable.
+    // Production mode
+    if (cachedUri !== currentUri) {
+      clientPromise = undefined;
+      cachedUri = currentUri;
+    }
+
     if (!clientPromise) {
       client = new MongoClient(currentUri, {
         serverApi: {
@@ -90,7 +117,13 @@ export async function getClient(): Promise<MongoClient> {
         connectTimeoutMS: 5000,
         serverSelectionTimeoutMS: 5000,
       });
-      clientPromise = client.connect();
+
+      const p = client.connect();
+      // On connection rejection, clear cache so subsequent calls can retry
+      p.catch(() => {
+        clientPromise = undefined;
+      });
+      clientPromise = p;
     }
   }
 
@@ -101,7 +134,7 @@ export async function getClient(): Promise<MongoClient> {
  * Retrieves the candidate_hiring_tracker database instance.
  */
 export async function getDb(): Promise<Db> {
-  const currentDbName = process.env.MONGODB_DB || dbName;
+  const currentDbName = process.env.MONGODB_DB || 'candidate_hiring_tracker';
   const connectedClient = await getClient();
   return connectedClient.db(currentDbName);
 }
@@ -124,7 +157,7 @@ export async function checkMongoConnection(): Promise<{
   totalCandidates?: number;
   error?: string;
 }> {
-  const currentDbName = process.env.MONGODB_DB || dbName;
+  const currentDbName = process.env.MONGODB_DB || 'candidate_hiring_tracker';
   try {
     const db = await getDb();
     // Run ping command to verify active connection
@@ -138,11 +171,14 @@ export async function checkMongoConnection(): Promise<{
       totalCandidates: count,
     };
   } catch (err: any) {
+    const safeMsg = (err?.message || 'Unable to connect to the database.')
+      .replace(/(mongodb(?:\+srv)?:\/\/[^:]+:)([^@]+)@/g, '$1***@');
     return {
       connected: false,
       databaseName: currentDbName,
       collectionName: 'candidates',
-      error: err?.message || 'Unable to connect to the database.',
+      error: safeMsg,
     };
   }
 }
+
