@@ -1,0 +1,6 @@
+{
+  "name": "Candidate Hiring Tracker",
+  "description": "A clean, professional recruitment web application for managing job candidates, tracking them across hiring pipeline stages, and managing ratings and notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
